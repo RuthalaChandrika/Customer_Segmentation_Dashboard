@@ -1,0 +1,171 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
+df = pd.read_excel("Online Retail.xlsx")
+df.to_csv("online_retail.csv", index=False)
+print(df)
+# Basic exploration
+print(df.shape)
+print(df.info())
+print(df.describe())
+print(df.isnull().sum())
+
+# Remove duplicate rows
+df = df.drop_duplicates()
+
+# Remove rows without CustomerID
+df = df.dropna(subset=['CustomerID'])
+
+# Convert CustomerID to integer
+df['CustomerID'] = df['CustomerID'].astype(int)
+
+# Remove cancelled invoices
+df = df[~df['InvoiceNo'].astype(str).str.startswith('C')]
+
+# Remove negative quantities (returns)
+df = df[df['Quantity'] > 0]
+
+# Remove zero price products
+df = df[df['UnitPrice'] > 0]
+
+# Convert date column
+df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
+
+# Create Revenue column
+df['Revenue'] = df['Quantity'] * df['UnitPrice']
+
+df=df[(df['Quantity']>0) & (df['UnitPrice']>0)]
+
+print("Cleaned Data Shape:", df.shape)
+print(df.head())
+
+print("************Exploratory Data Analysis************")
+# Top Selling Products
+top_products=df.groupby('Description')['Quantity'].sum().sort_values(ascending=False).head(10)
+print(top_products)
+plt.figure(figsize=(10,10))
+sns.barplot(x=top_products.values,y=top_products.index)
+plt.title("top 10 selling products")
+plt.xlabel("Quantity sold")
+plt.ylabel("product")
+plt.show()
+# Top Revenue Generating Countries
+country_sales=df.groupby('Country')['Revenue'].sum().sort_values(ascending=False).head(10)
+print(country_sales)
+plt.figure(figsize=(10,10))
+sns.barplot(x=country_sales.values,y=country_sales.index)
+plt.title("top country vy revenue")
+plt.show()
+# Monthly Sales Trend
+df['Month']=df['InvoiceDate'].dt.to_period('M')
+monthly_sales=df.groupby('Month')['Revenue'].sum()
+monthly_sales = df.resample('M', on='InvoiceDate')['Revenue'].sum()
+plt.figure(figsize=(10,10))
+plt.plot(monthly_sales)
+plt.title("Monthly Revenue Trend")
+plt.xlabel("Month")
+plt.ylabel("Revenue")
+plt.xticks(rotation=45)
+plt.show()
+# Top Customers
+top_consumers=df.groupby('CustomerID')['Revenue'].sum().sort_values(ascending=False).head(10)
+print(top_consumers)
+plt.figure(figsize=(10,10))
+sns.barplot(x=top_consumers.values,y=top_consumers.index)
+plt.title("Top Customers by Revenue")
+plt.show()
+# Most Returned Products
+returns=df[df['Quantity'] < 0]
+returned_products=returns.groupby('Description')['Quantity'].sum().sort_values().head(10)
+plt.figure(figsize=(8,5))
+sns.histplot(df['Revenue'], bins=50)
+plt.title("Distribution of Order Revenue")
+plt.show()
+#  Distribution of Order Value
+plt.figure(figsize=(8,5))
+sns.histplot(df['Revenue'], bins=50)
+plt.title("Distribution of Order Revenue")
+plt.show()
+# Correlation Analysis
+corr=df[["Quantity","UnitPrice","Revenue"]].corr()
+print(corr)
+sns.heatmap(corr, annot=True, cmap='coolwarm')
+plt.title("Correlation Matrix")
+plt.show()
+# Country-wise Orders
+country_orders=df['Country'].value_counts().head(10)
+plt.figure(figsize=(8,5))
+sns.barplot(x=country_orders.values, y=country_orders.index)
+plt.title("Orders by Country")
+plt.show()
+
+print("*************Diagnostic Analysis***************")
+# # Identify Low-Revenue Months
+monthly_sales = df.resample('M', on='InvoiceDate')['Revenue'].sum()
+lowest_months = monthly_sales.sort_values().head(3)
+print("lowest months:",lowest_months)
+df.groupby(df['InvoiceDate'].dt.to_period('M')).agg({
+    'InvoiceNo':'nunique',
+    'CustomerID':'nunique',
+    'Revenue':'sum'
+})
+
+# Why Are Some Products Underperforming?
+low_products_revenue=df.groupby('Description')['Revenue'].sum().sort_values().head()
+print(low_products_revenue)
+
+lowest_products_unitprice=df.groupby('Description')['UnitPrice'].mean().sort_values(ascending=False).head()
+print(lowest_products_unitprice)
+# Why Are Products Returned? (Before Cleaning)
+returned_products_quantity=returns.groupby('Description')['Quantity'].sum().sort_values().head(10)
+print(returned_products_quantity)
+
+# Customer Churn Diagnosis
+customer_orders = df.groupby('CustomerID')['InvoiceNo'].nunique()
+one_time_customers = customer_orders[customer_orders == 1]
+print("One-time customers:", len(one_time_customers))
+
+# Revenue Leakage Analysis
+cancelled = df[df['InvoiceNo'].astype(str).str.startswith('C')]
+cancelled_revenue = (cancelled['Quantity'] * cancelled['UnitPrice']).sum()
+print("Revenue lost due to cancellations:", cancelled_revenue)
+
+print("***********Predictive Analysis ************")
+# We aggregate behavior per customer.  Now each row = one customer.
+customer_df=df.groupby('CustomerID').agg({
+    'Revenue':'sum',
+    'Quantity':'sum',
+    'InvoiceNo':'nunique'
+}).reset_index()
+print(customer_df)
+customer_df.rename(columns={
+    'Revenue':'Total_spend',
+    'Quantity':'Total_quantity',
+    'InvoiceNo':'Total_orders'
+},inplace=True)
+customer_df['Avg_Order_Value']=(customer_df['Total_spend']/customer_df['Total_orders'])
+print(customer_df.head())
+print(customer_df.columns)
+features =customer_df[ ['Total_spend','Total_quantity','Total_orders','Avg_Order_Value']]
+scaler=StandardScaler()
+scaled_features=scaler.fit_transform(features)
+inertia=[]
+for k in range(1,11):
+    kmeans=KMeans(n_clusters=k,init='k-means++',random_state=42)
+    kmeans.fit(scaled_features)
+    inertia.append(kmeans.inertia_)
+plt.plot(range(1,11),inertia)
+plt.xlabel("number of clusters")
+plt.ylabel("wcss")
+plt.title("Elbow method")
+plt.show()
+kmeans=KMeans(n_clusters=4,random_state=42)
+customer_df['cluster']=kmeans.fit_predict(scaled_features)
+print(customer_df['cluster'].value_counts())
+cluster_summary=customer_df.groupby('cluster').mean()
+print(cluster_summary)
+print(customer_df['cluster'].value_counts())
+# df.to_csv(r"C:\Users\LENOVO\OneDrive\Desktop\projects powerbi\hr_Attrition_data.csv",index=False)
